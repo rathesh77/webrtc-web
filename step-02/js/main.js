@@ -27,6 +27,8 @@ let localPeerConnection;
 let remotePeerConnection;
 
 
+const socket = io();
+
 // Define MediaStreams callbacks.
 
 // Sets the MediaStream as the video element src.
