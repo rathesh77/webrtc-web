@@ -6,40 +6,48 @@ const requestListener = function (req, res) {
   res.end('Hello, World!');
 }
 const server = http.createServer(requestListener);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: ['http://localhost:5500', 'http://localhost:5500']
+  }
+});
 
 const MAX_CLIENTS_PER_ROOM = 2
 io.on('connection', (socket) => {
   console.log('a user connected');
-  socket.on('create or join room', room => {
-    const currentRoom = io.sockets.adapter.rooms.get(room.name)
+  socket.on('create or join room', roomName => {
+    console.log('socket is trying to join a room')
+    const currentRoom = io.sockets.adapter.rooms.get(roomName)
     const size = currentRoom ? currentRoom.size : 0
     if (currentRoom) {
       // la room existe deja
       const { size } = currentRoom
       if (size == MAX_CLIENTS_PER_ROOM) {
-        socket.emit('room is full...')
+        socket.emit('room is already full...')
+        console.log('room is already full...')
         return
       }
     }
-    socket.join(room.name)
+    socket.join(roomName)
     if (size + 1 > 1) {
-      socket.emit('create offer', { roomName: room.name })
+      console.log('room is now full')
+      socket.to(roomName).emit('create offer', roomName)
     }
   })
 
-  socket.on('offer created', (offer, room) => {
-    socket.to(room.name).emit('create answer', offer)
+  socket.on('offer created', ({description, roomName}) => {
+    socket.to(roomName).emit('create answer', {description, roomName})
   })
 
-  /*
-  socket.on('answer created', (answer, room) => {
-    socket.to(room.name).emit('send ice candidate', offer)
+  socket.on('set description only', ({description, roomName}) => {
+    socket.to(roomName).emit('set description only', {description, roomName})
   })
 
-  socket.on('ice candidate sent', (answer, room) => {
-    socket.to(room.name).emit('send ice candidate', offer)
-  })*/
+  socket.on('send ice candidate', ({newIceCandidate, roomName}) => {
+    socket.to(roomName).emit('receive ice candidate', newIceCandidate)
+
+  })
+
 });
 
 server.listen(8080);

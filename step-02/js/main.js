@@ -26,8 +26,9 @@ let remoteStream;
 let localPeerConnection;
 let remotePeerConnection;
 
+const roomName = 'room 1'
 
-const socket = io();
+const socket = io('http://localhost:8080');
 
 // Define MediaStreams callbacks.
 
@@ -87,18 +88,12 @@ function handleConnection(event) {
   const iceCandidate = event.candidate;
 
   if (iceCandidate) {
+    if (peerConnection != localPeerConnection)
+      return;
+      
     const newIceCandidate = new RTCIceCandidate(iceCandidate);
-    const otherPeer = getOtherPeer(peerConnection);
-
-    otherPeer.addIceCandidate(newIceCandidate)
-      .then(() => {
-        handleConnectionSuccess(peerConnection);
-      }).catch((error) => {
-        handleConnectionFailure(peerConnection, error);
-      });
-
-    trace(`${getPeerName(peerConnection)} ICE candidate:\n` +
-          `${event.candidate.candidate}.`);
+    socket.emit('send ice candidate', {newIceCandidate, roomName})
+    
   }
 }
 
@@ -143,42 +138,32 @@ function setRemoteDescriptionSuccess(peerConnection) {
 }
 
 // Logs offer creation and sets peer connection session descriptions.
-function createdOffer(description) {
+function createdOffer(description, roomName, socket) {
   trace(`Offer from localPeerConnection:\n${description.sdp}`);
 
-  trace('localPeerConnection setLocalDescription start.');
+  trace('alice setLocalDescription start.');
   localPeerConnection.setLocalDescription(description)
     .then(() => {
-      setLocalDescriptionSuccess(localPeerConnection);
-    }).catch(setSessionDescriptionError);
+      trace ('alice setLocalDescription success')
+    }).catch(() => trace ('alice setLocalDescription FAILED'));
 
-  trace('remotePeerConnection setRemoteDescription start.');
-  remotePeerConnection.setRemoteDescription(description)
-    .then(() => {
-      setRemoteDescriptionSuccess(remotePeerConnection);
-    }).catch(setSessionDescriptionError);
+    socket.emit('offer created', {description, roomName})
 
-  trace('remotePeerConnection createAnswer start.');
-  remotePeerConnection.createAnswer()
-    .then(createdAnswer)
-    .catch(setSessionDescriptionError);
 }
 
 // Logs answer to offer creation and sets peer connection session descriptions.
-function createdAnswer(description) {
-  trace(`Answer from remotePeerConnection:\n${description.sdp}.`);
+function createdAnswer(description, roomName, socket) {
+  trace(`Answer from BOB:\n${description.sdp}.`);
 
-  trace('remotePeerConnection setLocalDescription start.');
-  remotePeerConnection.setLocalDescription(description)
+  trace('BOB setLocalDescription start.');
+  localPeerConnection.setLocalDescription(description)
     .then(() => {
-      setLocalDescriptionSuccess(remotePeerConnection);
-    }).catch(setSessionDescriptionError);
-
-  trace('localPeerConnection setRemoteDescription start.');
-  localPeerConnection.setRemoteDescription(description)
-    .then(() => {
-      setRemoteDescriptionSuccess(localPeerConnection);
-    }).catch(setSessionDescriptionError);
+      trace ('bob setLocalDesription success')
+    }).catch(() => {
+      trace ('bob setLocalDesription FAILED')
+    });
+    
+  socket.emit('set description only', {description, roomName})
 }
 
 
@@ -204,6 +189,7 @@ function startAction() {
 
 // Handles call button action: creates peer connection.
 function callAction() {
+  socket.emit('create or join room',  roomName)
   callButton.disabled = true;
   hangupButton.disabled = false;
 
@@ -230,27 +216,61 @@ function callAction() {
   localPeerConnection.addEventListener(
     'iceconnectionstatechange', handleConnectionChange);
 
-  remotePeerConnection = new RTCPeerConnection(servers);
-  trace('Created remote peer connection object remotePeerConnection.');
+  localPeerConnection.addEventListener('addstream', gotRemoteMediaStream);
 
-  remotePeerConnection.addEventListener('icecandidate', handleConnection);
-  remotePeerConnection.addEventListener(
-    'iceconnectionstatechange', handleConnectionChange);
-  remotePeerConnection.addEventListener('addstream', gotRemoteMediaStream);
-
-  // Add local stream to connection and create offer to connect.
-  localPeerConnection.addStream(localStream);
   trace('Added local stream to localPeerConnection.');
 
-  trace('localPeerConnection createOffer start.');
-  localPeerConnection.createOffer(offerOptions)
-    .then(createdOffer).catch(setSessionDescriptionError);
+  socket.on('create offer', roomName => {
+
+    trace('alice createOffer start.');
+    localPeerConnection.addStream(localStream);
+    localPeerConnection.createOffer(offerOptions)
+      .then((description) => { createdOffer(description, roomName, socket) }).catch(setSessionDescriptionError);  
+  })
+  socket.on('set description only', ({description, roomName}) => {
+    trace('alice set final description')
+    localPeerConnection.setRemoteDescription(description)
+    .then(() => {
+      trace ('ALICE setRemoteDesription final success')
+    }).catch(() => {
+      trace ('ALICE setRemoteDesription final failed')
+    });
+
+  })
+
+  socket.on('create answer' , ({description, roomName}) => {
+
+    localPeerConnection.addStream(localStream);
+
+    trace('bob setRemoteDescription start.');
+    localPeerConnection.setRemoteDescription(description)
+    .then(() => {
+      trace ('bob setRemoteDescription success');
+    }).catch(() => {
+      trace ('bob setRemoteDescription FAILED');
+    });
+
+    trace('BOB createAnswer start.');
+    localPeerConnection.createAnswer()
+      .then((description) => {createdAnswer(description, roomName, socket)})
+      .catch(setSessionDescriptionError);
+  })
+
+  socket.on('receive ice candidate', iceCandidate => {
+    localPeerConnection.addIceCandidate(iceCandidate)
+      .then(() => {
+        handleConnectionSuccess(localPeerConnection);
+      }).catch((error) => {
+        handleConnectionFailure(localPeerConnection, error);
+      });
+
+    trace(`receive ICE candidate added`);
+  })
 }
 
 // Handles hangup action: ends up call, closes connections and resets peers.
 function hangupAction() {
   localPeerConnection.close();
-  remotePeerConnection.close();
   localPeerConnection = null;
   remotePeerConnection = null;
   hangupButton.disabled = true;
@@ -269,7 +289,7 @@ hangupButton.addEventListener('click', hangupAction);
 // Gets the "other" peer connection.
 function getOtherPeer(peerConnection) {
   return (peerConnection === localPeerConnection) ?
-      remotePeerConnection : localPeerConnection;
+  null : localPeerConnection;
 }
 
 // Gets the name of a certain peer connection.
