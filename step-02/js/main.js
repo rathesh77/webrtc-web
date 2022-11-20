@@ -91,7 +91,7 @@ function handleConnection(event) {
       return;
       
     const newIceCandidate = new RTCIceCandidate(iceCandidate);
-    socket.emit('send ice candidate', {newIceCandidate, roomName})
+    socket.emit('message', {type: 'candidate', newIceCandidate, roomName})
     
   }
 }
@@ -146,7 +146,7 @@ function createdOffer(description, roomName, socket) {
       trace ('alice setLocalDescription success')
     }).catch(() => trace ('alice setLocalDescription FAILED'));
 
-    socket.emit('offer created', {description, roomName})
+    socket.emit('message', { type: 'answer', description, roomName})
 
 }
 
@@ -162,7 +162,7 @@ function createdAnswer(description, roomName, socket) {
       trace ('bob setLocalDesription FAILED')
     });
     
-  socket.emit('set description only', {description, roomName})
+  socket.emit('message', {type: 'answer', description, roomName})
 }
 
 
@@ -219,44 +219,42 @@ function callAction() {
 
   trace('Added local stream to peerConnection.');
 
-  socket.on('create offer', roomName => {
+  socket.on('message', message => {
+    const {type, roomName, description, newIceCandidate} = message
+    if (type == 'offer') {
+      trace('alice createOffer start.');
+      peerConnection.addStream(localStream);
+      peerConnection.createOffer(offerOptions)
+        .then((description) => { createdOffer(description, roomName, socket) })
+        .catch(setSessionDescriptionError);  
+    
+    } else if (type == 'answer') {
+      if (peerConnection.localDescription && !peerConnection.remoteDescription) {
+        trace('alice set final description')
+        peerConnection.setRemoteDescription(description)
+        .then(() => {
+          trace ('ALICE setRemoteDesription final success')
+        }).catch(() => {
+          trace ('ALICE setRemoteDesription final failed')
+        });
+        return;
+      }
+      peerConnection.addStream(localStream);
 
-    trace('alice createOffer start.');
-    peerConnection.addStream(localStream);
-    peerConnection.createOffer(offerOptions)
-      .then((description) => { createdOffer(description, roomName, socket) }).catch(setSessionDescriptionError);  
-  })
-  socket.on('set description only', ({description, roomName}) => {
-    trace('alice set final description')
-    peerConnection.setRemoteDescription(description)
-    .then(() => {
-      trace ('ALICE setRemoteDesription final success')
-    }).catch(() => {
-      trace ('ALICE setRemoteDesription final failed')
-    });
-
-  })
-
-  socket.on('create answer' , ({description, roomName}) => {
-
-    peerConnection.addStream(localStream);
-
-    trace('bob setRemoteDescription start.');
-    peerConnection.setRemoteDescription(description)
-    .then(() => {
-      trace ('bob setRemoteDescription success');
-    }).catch(() => {
-      trace ('bob setRemoteDescription FAILED');
-    });
-
-    trace('BOB createAnswer start.');
-    peerConnection.createAnswer()
-      .then((description) => {createdAnswer(description, roomName, socket)})
-      .catch(setSessionDescriptionError);
-  })
-
-  socket.on('receive ice candidate', iceCandidate => {
-    peerConnection.addIceCandidate(iceCandidate)
+      trace('bob setRemoteDescription start.');
+      peerConnection.setRemoteDescription(description)
+      .then(() => {
+        trace ('bob setRemoteDescription success');
+      }).catch(() => {
+        trace ('bob setRemoteDescription FAILED');
+      });
+  
+      trace('BOB createAnswer start.');
+      peerConnection.createAnswer()
+        .then((description) => {createdAnswer(description, roomName, socket)})
+        .catch(setSessionDescriptionError);
+    } else if (type == 'candidate') {
+      peerConnection.addIceCandidate(newIceCandidate)
       .then(() => {
         handleConnectionSuccess(peerConnection);
       }).catch((error) => {
@@ -264,7 +262,9 @@ function callAction() {
       });
 
     trace(`receive ICE candidate added`);
+    }
   })
+  
 }
 
 // Handles hangup action: ends up call, closes connections and resets peers.

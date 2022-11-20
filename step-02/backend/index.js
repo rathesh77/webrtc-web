@@ -31,23 +31,15 @@ io.on('connection', (socket) => {
     socket.join(roomName)
     if (size + 1 > 1) {
       console.log('room is now full')
-      socket.to(roomName).emit('create offer', roomName)
+      socket.to(roomName).emit('message',  {type: 'offer',roomName})
     }
   })
+  socket.on('message', message => {
+    const {roomName} = message
+    console.log(message.type, roomName)
 
-  socket.on('offer created', ({description, roomName}) => {
-    socket.to(roomName).emit('create answer', {description, roomName})
+    socket.to(roomName).emit('message', {...message})
   })
-
-  socket.on('set description only', ({description, roomName}) => {
-    socket.to(roomName).emit('set description only', {description, roomName})
-  })
-
-  socket.on('send ice candidate', ({newIceCandidate, roomName}) => {
-    socket.to(roomName).emit('receive ice candidate', newIceCandidate)
-
-  })
-
 });
 
 server.listen(8080);
